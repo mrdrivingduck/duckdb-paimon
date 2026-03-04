@@ -1,0 +1,45 @@
+# name: test/sql/paimon_scan.test
+# group: [sql]
+
+require paimon
+
+query IIII
+SELECT * FROM paimon_scan('./data/testdb.db/testtbl');
+----
+Alice	1	0	11.0
+Bob	1	1	12.1
+Cathy	1	2	13.2
+David	2	0	21.0
+Eve	2	1	22.1
+Frank	2	2	23.2
+Grace	3	0	31.0
+Henry	3	1	32.1
+Iris	3	2	33.2
+
+# projection pushdown
+query I
+SELECT f0 FROM paimon_scan('./data/testdb.db/testtbl');
+----
+Alice
+Bob
+Cathy
+David
+Eve
+Frank
+Grace
+Henry
+Iris
+
+# projection pushdown
+query II
+SELECT f3, f0 FROM paimon_scan('./data/testdb.db/testtbl');
+----
+11.0	Alice
+12.1	Bob
+13.2	Cathy
+21.0	David
+22.1	Eve
+23.2	Frank
+31.0	Grace
+32.1	Henry
+33.2	Iris

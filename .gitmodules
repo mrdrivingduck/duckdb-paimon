@@ -6,3 +6,6 @@
 	path = extension-ci-tools
 	url = https://github.com/duckdb/extension-ci-tools
 	branch = main
+[submodule "third_party/paimon-cpp"]
+	path = third_party/paimon-cpp
+	url = https://github.com/alibaba/paimon-cpp
