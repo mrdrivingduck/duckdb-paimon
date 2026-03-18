@@ -26,6 +26,8 @@
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 
+#include "paimon/schema/schema.h"
+
 #include "paimon_catalog.hpp"
 #include "paimon_schema_entry.hpp"
 #include "paimon_table_entry.hpp"

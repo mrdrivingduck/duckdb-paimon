@@ -22,8 +22,7 @@ set(PAIMON_CPP_LIB ${PAIMON_CPP_PREFIX}/lib64)
 file(MAKE_DIRECTORY ${PAIMON_CPP_INCLUDE})
 
 set(PAIMON_CPP_PATCHES
-  ${CMAKE_CURRENT_SOURCE_DIR}/patches/paimon-cpp-install-arrow-headers.patch
-  ${CMAKE_CURRENT_SOURCE_DIR}/patches/paimon-cpp-cmake-policy-version-minimum.patch)
+  ${CMAKE_CURRENT_SOURCE_DIR}/patches/paimon-cpp-install-arrow-headers.patch)
 
 # Build patch command: apply each patch idempotently
 set(PAIMON_CPP_PATCH_SCRIPT "")
@@ -68,7 +67,8 @@ set(EXTENSION_SOURCES
   src/paimon_storage/paimon_schema_set.cpp
   src/paimon_storage/paimon_table_entry.cpp
   src/paimon_storage/paimon_table_set.cpp
-  src/paimon_storage/paimon_transaction_manager.cpp)
+  src/paimon_storage/paimon_transaction_manager.cpp
+  src/paimon_storage/paimon_type_utils.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
