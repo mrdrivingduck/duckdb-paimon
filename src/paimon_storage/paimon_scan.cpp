@@ -25,12 +25,19 @@
 #include "duckdb.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 
 #include "paimon_catalog.hpp"
 #include "paimon_functions.hpp"
+#include "paimon_type_utils.hpp"
 
 #include "paimon/api.h"
 #include "paimon/catalog/identifier.h"
+#include "paimon/predicate/predicate_builder.h"
+#include "paimon/predicate/predicate_utils.h"
 #include "paimon/schema/schema.h"
 
 #include <string>
@@ -46,7 +53,96 @@ public:
 	map<string, string> paimon_options;
 
 	ArrowTableSchema arrow_table;
+
+	std::shared_ptr<paimon::Predicate> predicates = nullptr;
 };
+
+static std::shared_ptr<paimon::Predicate> TryConvertComparison(const BoundComparisonExpression &comp, LogicalGet &get) {
+	// early exit
+	switch (comp.type) {
+	case ExpressionType::COMPARE_EQUAL:
+		break;
+	default:
+		return nullptr;
+	}
+
+	// normalize to col OP constant
+	Expression *col_expr = nullptr;
+	Expression *const_expr = nullptr;
+	ExpressionType comparison_type = comp.type;
+
+	if (comp.left->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF &&
+	    comp.right->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		col_expr = comp.left.get();
+		const_expr = comp.right.get();
+	} else if (comp.left->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT &&
+	           comp.right->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+		col_expr = comp.right.get();
+		const_expr = comp.left.get();
+		comparison_type = FlipComparisonExpression(comp.type);
+	} else {
+		return nullptr;
+	}
+
+	auto filter_binding_idx = col_expr->Cast<BoundColumnRefExpression>().binding.column_index;
+	auto col_idx = get.GetColumnIds()[filter_binding_idx];
+
+	auto val = const_expr->Cast<BoundConstantExpression>().value;
+	auto paimon_type = PaimonTypeUtils::ConvertFieldType(get.GetColumnType(col_idx));
+	auto literal = PaimonTypeUtils::ConvertLiteral(val, paimon_type);
+	if (!literal) {
+		return nullptr;
+	}
+
+	switch (comparison_type) {
+	case ExpressionType::COMPARE_EQUAL:
+		return paimon::PredicateBuilder::Equal(col_idx.GetPrimaryIndex(), get.GetColumnName(col_idx), paimon_type,
+		                                       literal.value());
+	default:
+		return nullptr;
+	}
+}
+
+static std::shared_ptr<paimon::Predicate> TryConvertExpression(const Expression &expr, LogicalGet &get) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_COMPARISON:
+		return TryConvertComparison(expr.Cast<BoundComparisonExpression>(), get);
+	default:
+		return nullptr;
+	}
+}
+
+static void PaimonPushdownFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data,
+                                 vector<unique_ptr<Expression>> &filters) {
+	auto &bind = bind_data->Cast<PaimonScanBindData>();
+	std::vector<std::shared_ptr<paimon::Predicate>> predicates;
+
+	for (idx_t i = 0; i < filters.size(); i++) {
+		auto pred = TryConvertExpression(*filters[i], get);
+		if (!pred) {
+			continue;
+		}
+
+		predicates.push_back(std::move(pred));
+
+		// We do not remove the filter from DuckDB's filter list here.
+		// Although the predicate has been pushed down to paimon-cpp,
+		// paimon-cpp performs predicate pushdown on a best-effort basis,
+		// which means it may return more rows than expected.
+		// Therefore, DuckDB must retain the filter in its execution plan
+		// to ensure correctness by re-evaluating the predicate.
+	}
+
+	if (!predicates.empty()) {
+		auto top_predicate = paimon::PredicateBuilder::And(predicates);
+		if (!top_predicate.ok()) {
+			throw IOException(top_predicate.status().ToString());
+		}
+		bind.predicates = std::move(top_predicate.value());
+	} else {
+		bind.predicates = nullptr;
+	}
+}
 
 static unique_ptr<FunctionData> PaimonScanBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<string> &names) {
@@ -125,6 +221,7 @@ struct PaimonScanGlobalState : public GlobalTableFunctionState {
 	atomic<idx_t> split_index {0};
 	string path;
 	ArrowTableSchema arrow_table;
+	std::shared_ptr<paimon::Predicate> paimon_predicates = nullptr;
 
 	idx_t MaxThreads() const override {
 		return splits.size();
@@ -202,8 +299,11 @@ private:
 		}
 
 		paimon::ReadContextBuilder read_context_builder(global_state.path);
-		auto read_context_result =
-		    read_context_builder.SetOptions(bind_data.paimon_options).SetReadFieldIds(read_column_ids).Finish();
+		auto read_context_result = read_context_builder.SetOptions(bind_data.paimon_options)
+		                               .SetReadFieldIds(read_column_ids)
+		                               .SetPredicate(global_state.paimon_predicates)
+		                               .EnablePredicateFilter(false)
+		                               .Finish();
 		if (!read_context_result.ok()) {
 			throw IOException(read_context_result.status().ToString());
 		}
@@ -229,6 +329,27 @@ static unique_ptr<GlobalTableFunctionState> PaimonScanInitGlobal(ClientContext &
                                                                  TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<PaimonScanBindData>();
 	auto state = make_uniq<PaimonScanGlobalState>();
+
+	// Remap predicates from table schema to read schema.
+	// The original predicate tree was constructed against the full table schema,
+	// but DuckDB may have already pruned columns via projection pushdown,
+	// resulting in a narrower read schema. We need to remap the column indices
+	// in the predicate tree to match the read schema so that paimon-cpp can
+	// correctly apply predicate pushdown on the projected columns.
+	if (bind.predicates != nullptr) {
+		auto &col_names = const_cast<ArrowTableSchema &>(bind.arrow_table).GetNames();
+		std::map<std::string, int32_t> column_ids_mapping;
+		for (idx_t i = 0; i < input.column_ids.size(); i++) {
+			column_ids_mapping.emplace(col_names[input.column_ids[i]], i);
+		}
+
+		auto pred_res = paimon::PredicateUtils::CreatePickedFieldFilter(bind.predicates, column_ids_mapping);
+		if (!pred_res.ok()) {
+			throw IOException(pred_res.status().ToString());
+		}
+
+		state->paimon_predicates = pred_res.value();
+	}
 
 	auto path = bind.warehouse + "/" + bind.dbname + paimon::Catalog::DB_SUFFIX + "/" + bind.tablename;
 
@@ -316,11 +437,13 @@ TableFunctionSet PaimonFunctions::GetPaimonScanFunction() {
 	                         PaimonScanBind, PaimonScanInitGlobal);
 	fun.init_local = PaimonScanInitLocal;
 	fun.projection_pushdown = true;
+	fun.pushdown_complex_filter = PaimonPushdownFilter;
 	function_set.AddFunction(fun);
 
 	auto fun_fullpath = TableFunction({LogicalType::VARCHAR}, PaimonScan, PaimonScanBind, PaimonScanInitGlobal);
 	fun_fullpath.init_local = PaimonScanInitLocal;
 	fun_fullpath.projection_pushdown = true;
+	fun_fullpath.pushdown_complex_filter = PaimonPushdownFilter;
 	function_set.AddFunction(fun_fullpath);
 
 	return function_set;
