@@ -8,3 +8,6 @@ test/python/__pycache__/
 .Rhistory
 .vscode
 .qoder
+
+# Claude Code
+.claude/settings.local.json
