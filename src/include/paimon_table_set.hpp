@@ -27,6 +27,8 @@
 namespace duckdb {
 
 class PaimonSchemaEntry;
+class PaimonCatalog;
+struct CreateTableInfo;
 
 class PaimonTableSet {
 public:
@@ -34,6 +36,8 @@ public:
 
 	optional_ptr<CatalogEntry> GetEntry(ClientContext &context, const EntryLookupInfo &lookup);
 	void Scan(ClientContext &context, const std::function<void(CatalogEntry &)> &callback);
+	optional_ptr<CatalogEntry> CreateEntry(CreateTableInfo &info);
+	void DropEntry(const string &table_name);
 
 private:
 	PaimonSchemaEntry &schema;
