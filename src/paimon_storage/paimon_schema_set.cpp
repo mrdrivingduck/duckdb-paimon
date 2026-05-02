@@ -78,4 +78,18 @@ optional_ptr<CatalogEntry> PaimonSchemaSet::GetEntry(ClientContext &context, con
 	return entry->second.get();
 }
 
+optional_ptr<CatalogEntry> PaimonSchemaSet::CreateEntry(const string &name) {
+	lock_guard<mutex> l(entry_lock);
+	CreateSchemaInfo info;
+	info.schema = name;
+	auto schema_entry = make_uniq<PaimonSchemaEntry>(catalog, info);
+	auto [iter, inserted] = entries.emplace(make_pair(name, std::move(schema_entry)));
+	return iter->second.get();
+}
+
+void PaimonSchemaSet::DropEntry(const string &name) {
+	lock_guard<mutex> l(entry_lock);
+	entries.erase(name);
+}
+
 } // namespace duckdb
