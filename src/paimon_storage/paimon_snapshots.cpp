@@ -47,12 +47,13 @@ struct PaimonSnapshotsGlobalState : public GlobalTableFunctionState {
 };
 
 static unique_ptr<FunctionData> PaimonSnapshotsBind(ClientContext &context, TableFunctionBindInput &input,
-                                                    vector<LogicalType> &return_types, vector<string> &names) {
+                                                    vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto bind_data = make_uniq<PaimonSnapshotsBindData>();
 
 	bind_data->path = PaimonTablePath::Parse(input.inputs);
-	bind_data->input_options =
-	    unordered_map<string, Value>(input.named_parameters.begin(), input.named_parameters.end());
+	for (auto &entry : input.named_parameters) {
+		bind_data->input_options[entry.first.GetIdentifierName()] = entry.second;
+	}
 
 	names = {"snapshot_id", "schema_id",          "commit_user",        "commit_kind",
 	         "commit_time", "total_record_count", "delta_record_count", "watermark"};
