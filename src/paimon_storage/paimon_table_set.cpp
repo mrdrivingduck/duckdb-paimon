@@ -47,7 +47,8 @@ optional_ptr<CatalogEntry> PaimonTableSet::BuildEntry(ClientContext &context, co
 	auto &catalog = schema.ParentCatalog().Cast<PaimonCatalog>();
 	auto &paimon_catalog = catalog.GetPaimonCatalog();
 
-	auto table_schema_result = paimon_catalog.LoadTableSchema(paimon::Identifier(schema.name, table_name));
+	auto table_schema_result =
+	    paimon_catalog.LoadTableSchema(paimon::Identifier(schema.name.GetIdentifierName(), table_name));
 	if (!table_schema_result.ok()) {
 		if (table_schema_result.status().IsNotExist()) {
 			return nullptr;
@@ -86,10 +87,10 @@ optional_ptr<CatalogEntry> PaimonTableSet::BuildEntry(ClientContext &context, co
 	}
 
 	CreateTableInfo table_info;
-	table_info.table = table_name;
+	table_info.SetTableName(Identifier(table_name));
 
 	for (idx_t i = 0; i < col_names.size(); i++) {
-		table_info.columns.AddColumn(ColumnDefinition(col_names[i], col_types[i]));
+		table_info.columns.AddColumn(ColumnDefinition(Identifier(col_names[i]), col_types[i]));
 	}
 
 	auto table_entry = make_uniq<PaimonTableEntry>(catalog, schema, table_info);
@@ -105,7 +106,7 @@ void PaimonTableSet::LoadEntries(ClientContext &context) {
 
 	auto &catalog = schema.ParentCatalog().Cast<PaimonCatalog>();
 	auto &paimon_catalog = catalog.GetPaimonCatalog();
-	auto &schema_name = schema.name;
+	auto &schema_name = schema.name.GetIdentifierName();
 
 	auto tables_result = paimon_catalog.ListTables(schema_name);
 	if (!tables_result.ok()) {
@@ -138,7 +139,7 @@ optional_ptr<CatalogEntry> PaimonTableSet::CreateEntry(CreateTableInfo &info) {
 	lock_guard<mutex> l(entry_lock);
 	auto &catalog = schema.ParentCatalog().Cast<PaimonCatalog>();
 	auto table_entry = make_uniq<PaimonTableEntry>(catalog, schema, info);
-	auto result = entries.emplace(make_pair(info.table, std::move(table_entry)));
+	auto result = entries.emplace(make_pair(info.GetTableName().GetIdentifierName(), std::move(table_entry)));
 	return result.first->second.get();
 }
 

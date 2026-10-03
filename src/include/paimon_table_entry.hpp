@@ -35,6 +35,7 @@ class PaimonTableEntry : public TableCatalogEntry {
 public:
 	PaimonTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info);
 
+	const ColumnList &GetColumns() const override;
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
@@ -42,6 +43,9 @@ public:
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 	virtual_column_map_t GetVirtualColumns() const override;
 	vector<column_t> GetRowIdColumns() const override;
+
+private:
+	ColumnList columns;
 };
 
 } // namespace duckdb

@@ -36,7 +36,7 @@ INSERT INTO pm.__test_count_stats.t1
 query II
 EXPLAIN SELECT count(*) FROM paimon_scan('./data/testdb.db/testtbl');
 ----
-physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
+physical_plan	<REGEX>:.*Column Data Scan.*
 
 query I
 SELECT count(*) FROM paimon_scan('./data/testdb.db/testtbl');
@@ -66,7 +66,7 @@ SELECT count(*) FROM paimon_scan('./data/testdb.db/testtbl') WHERE cast(f1 AS VA
 query II
 EXPLAIN SELECT count(*) FROM paimon_scan('./data/__test_count_stats.db/t1');
 ----
-physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
+physical_plan	<REGEX>:.*Column Data Scan.*
 
 query I
 SELECT count(*) FROM paimon_scan('./data/__test_count_stats.db/t1');

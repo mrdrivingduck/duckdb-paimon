@@ -224,7 +224,7 @@ SinkResultType PhysicalPaimonInsert::Sink(ExecutionContext &context, DataChunk &
 	auto &lstate = input.local_state.Cast<PaimonInsertLocalState>();
 	for (auto column : gstate.bucket_info.primary_key_ids) {
 		UnifiedVectorFormat format;
-		chunk.data[column].ToUnifiedFormat(chunk.size(), format);
+		chunk.data[column].ToUnifiedFormat(format);
 		for (idx_t row = 0; row < chunk.size(); row++) {
 			if (!format.validity.RowIsValid(format.sel->get_index(row))) {
 				throw ConstraintException("Paimon primary-key columns cannot contain NULL");
@@ -284,7 +284,7 @@ SinkResultType PhysicalPaimonInsert::Sink(ExecutionContext &context, DataChunk &
 
 	vector<UnifiedVectorFormat> part_formats(part_idxs.size());
 	for (idx_t i = 0; i < part_idxs.size(); i++) {
-		chunk.data[part_idxs[i]].ToUnifiedFormat(num_rows, part_formats[i]);
+		chunk.data[part_idxs[i]].ToUnifiedFormat(part_formats[i]);
 	}
 
 	std::map<std::pair<std::vector<string>, int32_t>, vector<idx_t>> partition_groups;
@@ -422,8 +422,8 @@ SourceResultType PhysicalPaimonInsert::GetDataInternal(ExecutionContext &context
 		return SourceResultType::FINISHED;
 	}
 
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(gstate.insert_count));
+	chunk.data[0].Append(Value::BIGINT(gstate.insert_count));
+	chunk.CheckCardinality(1);
 	gstate.finished = true;
 
 	return SourceResultType::HAVE_MORE_OUTPUT;
